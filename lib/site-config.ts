@@ -1,0 +1,103 @@
+import { supabase } from './supabase'
+import { SiteConfig } from './types'
+
+export type { SiteConfig, SEOSettings, ExpertSettings, TrustSignals } from './types'
+
+export const getSiteConfig = async (): Promise<SiteConfig> => {
+    // 1. Try resolving by Domain (Host Header)
+    let host = ''
+    let lookupDomain = ''
+    try {
+        if (typeof window === 'undefined') {
+            const { headers } = await import('next/headers')
+            const headersList = await headers()
+            // Prioritize x-forwarded-host (common behind proxies like Coolify/Nginx)
+            host = headersList.get('x-forwarded-host') || headersList.get('host') || ''
+            // Remove port for DB lookup (e.g., localhost:3000 -> localhost)
+            lookupDomain = host.split(':')[0]
+        }
+    } catch (e) {
+        // Headers might not be available in all contexts (e.g. static gen), ignore
+    }
+
+    if (lookupDomain && lookupDomain !== 'localhost') {
+        const { data, error } = await supabase
+            .from('site_configs')
+            .select('*')
+            .eq('domain', lookupDomain)
+            .single()
+
+        if (data && !error) {
+            return mapConfigData(data, host)
+        }
+    }
+
+    // 2. Fallback: Fetch by Niche Slug (from ENV)
+    const nicheSlugFromEnv = (process.env.NEXT_PUBLIC_NICHE_SLUG || 'gutter').toLowerCase()
+    try {
+        const { data, error } = await supabase
+            .from('site_configs')
+            .select('*')
+            .eq('niche_slug', nicheSlugFromEnv)
+            .single()
+
+        if (data && !error) {
+            return mapConfigData(data, host)
+        }
+    } catch (e) {
+        // Fallback failed
+    }
+
+    // 4. Last Resort: Environment Variables
+    return {
+        domain: host || process.env.NEXT_PUBLIC_SITE_DOMAIN || "localhost",
+        nicheSlug: nicheSlugFromEnv,
+
+        siteName: process.env.NEXT_PUBLIC_SITE_NAME || "Professional Services",
+        contactPhone: process.env.NEXT_PUBLIC_CONTACT_PHONE || "(555) 000-0000",
+        contactEmail: process.env.NEXT_PUBLIC_CONTACT_EMAIL || "info@example.com",
+        gscId: process.env.NEXT_PUBLIC_GSC_ID,
+        ga4Id: process.env.NEXT_PUBLIC_GA4_ID,
+        clarityId: process.env.NEXT_PUBLIC_CLARITY_ID,
+        openRouterKey: process.env.OPENROUTER_API_KEY,
+    };
+};
+
+// Helper to map DB response to SiteConfig interface
+function mapConfigData(data: any, actualHost?: string): SiteConfig {
+    // If we are on a different host than what's in the DB (e.g. test URL or localhost fallback)
+    // we prefer the actual host for Canonical/Sitemaps to work correctly.
+    const domain = (actualHost && (data.domain === 'localhost' || !data.domain))
+        ? actualHost
+        : data.domain;
+
+    return {
+        domain: domain,
+        nicheSlug: data.niche_slug,
+        siteName: data.site_name,
+        contactPhone: data.contact_phone,
+        contactEmail: data.contact_email,
+        gscId: data.gsc_id,
+        ga4Id: data.ga4_id,
+        clarityId: data.clarity_id,
+        openRouterKey: data.open_router_key,
+        // Business Address
+        businessAddress: data.business_address,
+        businessCity: data.business_city,
+        businessState: data.business_state,
+        businessZip: data.business_zip,
+        // Social Media
+        facebookUrl: data.facebook_url,
+        instagramUrl: data.instagram_url,
+        twitterUrl: data.twitter_url,
+        linkedinUrl: data.linkedin_url,
+        // Branding
+        footerTagline: data.footer_tagline,
+        logoUrl: data.logo_url,
+        aiSettings: data.ai_settings || { model: 'openai/gpt-4o-mini', promptTemplate: '' },
+        seoSettings: data.seo_settings || {},
+        expertSettings: data.expert_settings || {},
+        trustSignals: data.trust_signals || {},
+        homepageContent: data.homepage_content || ""
+    }
+}
